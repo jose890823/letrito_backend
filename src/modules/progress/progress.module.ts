@@ -5,6 +5,7 @@ import { LearningSession } from './entities/learning-session.entity';
 import { ChildLevel } from './entities/child-level.entity';
 import { ProgressService } from './progress.service';
 import { ProgressController } from './progress.controller';
+import { ProgressAdminController } from './progress-admin.controller';
 import { ChildrenProfilesModule } from '../children-profiles/children-profiles.module';
 
 /**
@@ -33,7 +34,7 @@ import { ChildrenProfilesModule } from '../children-profiles/children-profiles.m
     TypeOrmModule.forFeature([LearningProgress, LearningSession, ChildLevel]),
     ChildrenProfilesModule,
   ],
-  controllers: [ProgressController],
+  controllers: [ProgressController, ProgressAdminController],
   providers: [ProgressService],
   exports: [ProgressService],
 })

@@ -1002,4 +1002,517 @@ export class ProgressService {
       createdAt: session.createdAt.toISOString(),
     };
   }
+
+  // ============================================
+  // ADMIN OPERATIONS
+  // ============================================
+
+  /**
+   * Get global progress statistics (Admin)
+   */
+  async getGlobalProgressStats() {
+    // Total progress entries
+    const totalProgress = await this.progressRepository.count();
+
+    // Total sessions
+    const totalSessions = await this.sessionRepository.count();
+
+    // Count by mastery level
+    const masteryStats = await this.progressRepository
+      .createQueryBuilder('p')
+      .select('p.mastery_level', 'masteryLevel')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('p.mastery_level')
+      .getRawMany();
+
+    const masteryLevels = {
+      not_started: 0,
+      learning: 0,
+      practicing: 0,
+      mastered: 0,
+    };
+
+    for (const row of masteryStats) {
+      const level = row.masteryLevel as keyof typeof masteryLevels;
+      if (level in masteryLevels) {
+        masteryLevels[level] = parseInt(row.count, 10);
+      }
+    }
+
+    // Unique children with progress
+    const uniqueChildren = await this.progressRepository
+      .createQueryBuilder('p')
+      .select('COUNT(DISTINCT p.child_profile_id)', 'count')
+      .getRawOne();
+
+    // Sessions today
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const sessionsToday = await this.sessionRepository
+      .createQueryBuilder('s')
+      .where('s.session_date >= :today', { today })
+      .getCount();
+
+    // Sessions this week
+    const weekAgo = new Date();
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const sessionsThisWeek = await this.sessionRepository
+      .createQueryBuilder('s')
+      .where('s.session_date >= :weekAgo', { weekAgo })
+      .getCount();
+
+    // Average accuracy across all sessions
+    const avgAccuracyResult = await this.sessionRepository
+      .createQueryBuilder('s')
+      .select('AVG(s.accuracy_rate)', 'avgAccuracy')
+      .getRawOne();
+    const averageAccuracy = avgAccuracyResult?.avgAccuracy
+      ? Math.round(Number(avgAccuracyResult.avgAccuracy) * 100)
+      : 0;
+
+    // Total exercises completed
+    const totalExercisesResult = await this.sessionRepository
+      .createQueryBuilder('s')
+      .select('SUM(s.exercises_completed)', 'total')
+      .getRawOne();
+    const totalExercises = parseInt(totalExercisesResult?.total || '0', 10);
+
+    // Total minutes practiced
+    const totalMinutesResult = await this.sessionRepository
+      .createQueryBuilder('s')
+      .select('SUM(s.duration_minutes)', 'total')
+      .getRawOne();
+    const totalMinutes = parseInt(totalMinutesResult?.total || '0', 10);
+
+    // Progress by element type
+    const elementTypeStats = await this.progressRepository
+      .createQueryBuilder('p')
+      .select('p.element_type', 'elementType')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect(
+        "SUM(CASE WHEN p.mastery_level = 'mastered' THEN 1 ELSE 0 END)",
+        'mastered',
+      )
+      .groupBy('p.element_type')
+      .getRawMany();
+
+    const byElementType = {
+      letter: { total: 0, mastered: 0 },
+      syllable: { total: 0, mastered: 0 },
+      word: { total: 0, mastered: 0 },
+    };
+
+    for (const row of elementTypeStats) {
+      const type = row.elementType as keyof typeof byElementType;
+      if (type in byElementType) {
+        byElementType[type] = {
+          total: parseInt(row.total, 10),
+          mastered: parseInt(row.mastered, 10),
+        };
+      }
+    }
+
+    return {
+      totalProgress,
+      totalSessions,
+      uniqueChildren: parseInt(uniqueChildren?.count || '0', 10),
+      masteryLevels,
+      sessionsToday,
+      sessionsThisWeek,
+      averageAccuracy,
+      totalExercises,
+      totalMinutes,
+      byElementType,
+    };
+  }
+
+  /**
+   * Find all progress entries with filters (Admin)
+   */
+  async findAllAdmin(options: {
+    page: number;
+    limit: number;
+    childProfileId?: string;
+    elementType?: string;
+    masteryLevel?: string;
+    sortBy: string;
+    sortOrder: 'ASC' | 'DESC';
+  }) {
+    const { page, limit, childProfileId, elementType, masteryLevel, sortBy, sortOrder } = options;
+    const skip = (page - 1) * limit;
+
+    const queryBuilder = this.progressRepository
+      .createQueryBuilder('progress')
+      .leftJoinAndSelect('progress.childProfile', 'childProfile')
+      .leftJoinAndSelect('childProfile.parent', 'parent');
+
+    // Apply filters
+    if (childProfileId) {
+      queryBuilder.andWhere('progress.childProfileId = :childProfileId', { childProfileId });
+    }
+
+    if (elementType) {
+      queryBuilder.andWhere('progress.elementType = :elementType', { elementType });
+    }
+
+    if (masteryLevel) {
+      queryBuilder.andWhere('progress.masteryLevel = :masteryLevel', { masteryLevel });
+    }
+
+    // Apply sorting
+    const validSortFields = ['lastPracticedAt', 'createdAt', 'totalAttempts', 'accuracyRate', 'masteryLevel'];
+    const sortField = validSortFields.includes(sortBy) ? sortBy : 'lastPracticedAt';
+    queryBuilder.orderBy(`progress.${sortField}`, sortOrder);
+
+    // Get total count
+    const total = await queryBuilder.getCount();
+
+    // Apply pagination
+    queryBuilder.skip(skip).take(limit);
+
+    // Execute query
+    const progressEntries = await queryBuilder.getMany();
+
+    // Map to response format
+    const data = progressEntries.map((p) => ({
+      id: p.id,
+      childProfileId: p.childProfileId,
+      childProfile: p.childProfile
+        ? {
+            id: p.childProfile.id,
+            name: p.childProfile.name,
+            avatarUrl: p.childProfile.avatarUrl,
+            parent: p.childProfile.parent
+              ? {
+                  id: p.childProfile.parent.id,
+                  firstName: p.childProfile.parent.firstName,
+                  lastName: p.childProfile.parent.lastName,
+                  email: p.childProfile.parent.email,
+                }
+              : null,
+          }
+        : null,
+      elementType: p.elementType,
+      elementId: p.elementId,
+      skillType: p.skillType,
+      totalAttempts: p.totalAttempts,
+      correctAttempts: p.correctAttempts,
+      accuracyPercentage: p.accuracyPercentage,
+      masteryLevel: p.masteryLevel,
+      currentStreak: p.currentStreak,
+      bestStreak: p.bestStreak,
+      masteredAt: p.masteredAt ? new Date(p.masteredAt).toISOString() : null,
+      lastPracticedAt: p.lastPracticedAt ? new Date(p.lastPracticedAt).toISOString() : null,
+      createdAt: new Date(p.createdAt).toISOString(),
+    }));
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Find all sessions with filters (Admin)
+   */
+  async findAllSessionsAdmin(options: {
+    page: number;
+    limit: number;
+    childProfileId?: string;
+    sortBy: string;
+    sortOrder: 'ASC' | 'DESC';
+  }) {
+    const { page, limit, childProfileId, sortBy, sortOrder } = options;
+    const skip = (page - 1) * limit;
+
+    const queryBuilder = this.sessionRepository
+      .createQueryBuilder('session')
+      .leftJoinAndSelect('session.childProfile', 'childProfile')
+      .leftJoinAndSelect('childProfile.parent', 'parent');
+
+    // Apply filters
+    if (childProfileId) {
+      queryBuilder.andWhere('session.childProfileId = :childProfileId', { childProfileId });
+    }
+
+    // Apply sorting
+    const validSortFields = ['sessionDate', 'createdAt', 'durationMinutes', 'exercisesCompleted', 'accuracyRate'];
+    const sortField = validSortFields.includes(sortBy) ? sortBy : 'sessionDate';
+    queryBuilder.orderBy(`session.${sortField}`, sortOrder);
+
+    // Get total count
+    const total = await queryBuilder.getCount();
+
+    // Apply pagination
+    queryBuilder.skip(skip).take(limit);
+
+    // Execute query
+    const sessions = await queryBuilder.getMany();
+
+    // Map to response format
+    const data = sessions.map((s) => ({
+      id: s.id,
+      childProfileId: s.childProfileId,
+      childProfile: s.childProfile
+        ? {
+            id: s.childProfile.id,
+            name: s.childProfile.name,
+            avatarUrl: s.childProfile.avatarUrl,
+            parent: s.childProfile.parent
+              ? {
+                  id: s.childProfile.parent.id,
+                  firstName: s.childProfile.parent.firstName,
+                  lastName: s.childProfile.parent.lastName,
+                  email: s.childProfile.parent.email,
+                }
+              : null,
+          }
+        : null,
+      sessionDate: new Date(s.sessionDate).toISOString().split('T')[0],
+      durationMinutes: s.durationMinutes,
+      exercisesCompleted: s.exercisesCompleted,
+      correctCount: s.correctCount,
+      accuracyPercentage: s.accuracyPercentage,
+      focusArea: s.focusArea,
+      createdAt: new Date(s.createdAt).toISOString(),
+    }));
+
+    return {
+      data,
+      meta: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  /**
+   * Get progress summary for a child (Admin - no parent verification)
+   */
+  async getProgressSummaryAdmin(childProfileId: string): Promise<ProgressSummaryDto> {
+    // Verify child exists
+    await this.childrenProfilesService.findById(childProfileId);
+
+    const level = await this.getOrCreateChildLevel(childProfileId);
+    const lastProgress = await this.progressRepository.findOne({
+      where: { childProfileId },
+      order: { lastPracticedAt: 'DESC' },
+    });
+
+    return {
+      childProfileId,
+      letters: await this.getCategorySummary(childProfileId, ElementType.LETTER),
+      syllables: await this.getCategorySummary(childProfileId, ElementType.SYLLABLE),
+      words: await this.getCategorySummary(childProfileId, ElementType.WORD),
+      overallLevel: level.overallLevel,
+      totalXp: level.totalXp,
+      xpForNextLevel: getXpForNextLevel(level.overallLevel),
+      totalMastered: level.totalMastered,
+      lastActivity: lastProgress?.lastPracticedAt
+        ? new Date(lastProgress.lastPracticedAt).toISOString()
+        : null,
+    };
+  }
+
+  /**
+   * Get child level (Admin - no parent verification)
+   */
+  async getChildLevelAdmin(childProfileId: string): Promise<ChildLevelResponseDto> {
+    // Verify child exists
+    await this.childrenProfilesService.findById(childProfileId);
+    const level = await this.getOrCreateChildLevel(childProfileId);
+
+    return {
+      childProfileId: level.childProfileId,
+      lettersReadingLevel: level.lettersReadingLevel,
+      lettersWritingLevel: level.lettersWritingLevel,
+      syllablesReadingLevel: level.syllablesReadingLevel,
+      syllablesWritingLevel: level.syllablesWritingLevel,
+      wordsReadingLevel: level.wordsReadingLevel,
+      wordsWritingLevel: level.wordsWritingLevel,
+      overallLevel: level.overallLevel,
+      totalXp: level.totalXp,
+      xpForNextLevel: getXpForNextLevel(level.overallLevel),
+      averageLevel: level.averageLevel,
+      lettersMastered: level.lettersMastered,
+      syllablesMastered: level.syllablesMastered,
+      wordsMastered: level.wordsMastered,
+      totalMastered: level.totalMastered,
+    };
+  }
+
+  /**
+   * Get weekly activity (Admin - no parent verification)
+   */
+  async getWeeklyActivityAdmin(childProfileId: string): Promise<WeeklyActivityResponseDto> {
+    // Verify child exists
+    await this.childrenProfilesService.findById(childProfileId);
+
+    const today = new Date();
+    const weekStart = new Date(today);
+    weekStart.setDate(today.getDate() - 6);
+    weekStart.setHours(0, 0, 0, 0);
+
+    const sessions = await this.sessionRepository.find({
+      where: {
+        childProfileId,
+        sessionDate: Between(weekStart, today),
+      },
+      order: { sessionDate: 'ASC' },
+    });
+
+    // Same logic as getWeeklyActivity
+    const dailyMap = new Map<string, DailyActivityDto>();
+
+    for (let i = 0; i < 7; i++) {
+      const date = new Date(weekStart);
+      date.setDate(weekStart.getDate() + i);
+      const dateStr = date.toISOString().split('T')[0];
+      dailyMap.set(dateStr, {
+        date: dateStr,
+        minutesPracticed: 0,
+        exercisesCompleted: 0,
+        accuracyPercentage: 0,
+        newElementsLearned: 0,
+        practiced: false,
+      });
+    }
+
+    for (const session of sessions) {
+      const sessionDate = new Date(session.sessionDate);
+      const dateStr = sessionDate.toISOString().split('T')[0];
+      const day = dailyMap.get(dateStr);
+      if (day) {
+        day.minutesPracticed += session.durationMinutes;
+        day.exercisesCompleted += session.exercisesCompleted;
+        day.accuracyPercentage = session.accuracyPercentage
+          ? Math.round(
+              (day.accuracyPercentage + Number(session.accuracyRate) * 100) / 2,
+            )
+          : Math.round(Number(session.accuracyRate) * 100);
+        day.practiced = true;
+      }
+    }
+
+    const dailyActivity = Array.from(dailyMap.values());
+    const activeDays = dailyActivity.filter((d) => d.practiced).length;
+    const totalMinutes = dailyActivity.reduce((sum, d) => sum + d.minutesPracticed, 0);
+    const totalExercises = dailyActivity.reduce((sum, d) => sum + d.exercisesCompleted, 0);
+    const activeDaysData = dailyActivity.filter((d) => d.practiced);
+    const averageAccuracy =
+      activeDaysData.length > 0
+        ? Math.round(
+            activeDaysData.reduce((sum, d) => sum + d.accuracyPercentage, 0) /
+              activeDaysData.length,
+          )
+        : 0;
+
+    let currentStreak = 0;
+    for (let i = dailyActivity.length - 1; i >= 0; i--) {
+      if (dailyActivity[i].practiced) {
+        currentStreak++;
+      } else {
+        break;
+      }
+    }
+
+    return {
+      childProfileId,
+      weekStartDate: weekStart.toISOString().split('T')[0],
+      weekEndDate: today.toISOString().split('T')[0],
+      dailyActivity,
+      activeDays,
+      totalMinutes,
+      totalExercises,
+      averageAccuracy,
+      currentStreak,
+    };
+  }
+
+  /**
+   * Get session history (Admin - no parent verification)
+   */
+  async getSessionHistoryAdmin(
+    childProfileId: string,
+    page: number = 1,
+    limit: number = 10,
+  ): Promise<SessionHistoryResponseDto> {
+    // Verify child exists
+    await this.childrenProfilesService.findById(childProfileId);
+
+    const [sessions, total] = await this.sessionRepository.findAndCount({
+      where: { childProfileId },
+      order: { createdAt: 'DESC' },
+      skip: (page - 1) * limit,
+      take: limit,
+    });
+
+    return {
+      childProfileId,
+      sessions: sessions.map((s) => this.toSessionHistoryItemDto(s)),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  /**
+   * Get letters progress (Admin - no parent verification)
+   */
+  async getLettersProgressAdmin(childProfileId: string): Promise<ElementProgressSummaryDto[]> {
+    // Verify child exists
+    await this.childrenProfilesService.findById(childProfileId);
+    return this.getElementsProgress(childProfileId, ElementType.LETTER);
+  }
+
+  /**
+   * Get timeline (Admin - no parent verification)
+   */
+  async getTimelineAdmin(childProfileId: string, limit: number = 20): Promise<TimelineResponseDto> {
+    // Verify child exists
+    await this.childrenProfilesService.findById(childProfileId);
+
+    const events: TimelineEventDto[] = [];
+
+    const masteredElements = await this.progressRepository.find({
+      where: {
+        childProfileId,
+        masteryLevel: MasteryLevel.MASTERED,
+      },
+      order: { masteredAt: 'DESC' },
+      take: limit,
+    });
+
+    for (const element of masteredElements) {
+      if (element.masteredAt) {
+        events.push({
+          date: new Date(element.masteredAt).toISOString(),
+          eventType: 'mastered_element',
+          description: this.getMasteryDescription(element),
+          metadata: {
+            elementType: element.elementType,
+            elementId: element.elementId,
+            skillType: element.skillType,
+          },
+        });
+      }
+    }
+
+    events.sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+    );
+
+    return {
+      childProfileId,
+      events: events.slice(0, limit),
+      total: events.length,
+    };
+  }
 }

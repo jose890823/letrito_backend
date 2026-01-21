@@ -996,4 +996,229 @@ export class AnalyticsService {
       bestStreak: usage.bestStreak,
     };
   }
+
+  // ============================================
+  // ADMIN METHODS
+  // ============================================
+
+  /**
+   * Obtiene estadísticas globales para el admin dashboard
+   */
+  async getGlobalStats(days: number = 30) {
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0];
+
+    // Total children profiles
+    const totalChildren = await this.childProfileRepository.count();
+
+    // Active children (with activity in the period)
+    const activeChildrenResult = await this.dailyUsageRepository
+      .createQueryBuilder('usage')
+      .select('COUNT(DISTINCT usage.childProfileId)', 'count')
+      .where('usage.date >= :startDate', { startDate: startDateStr })
+      .andWhere('usage.totalMinutes > 0')
+      .getRawOne();
+    const activeChildren = parseInt(activeChildrenResult?.count || '0', 10);
+
+    // Total usage minutes in period
+    const usageResult = await this.dailyUsageRepository
+      .createQueryBuilder('usage')
+      .select('SUM(usage.totalMinutes)', 'totalMinutes')
+      .addSelect('SUM(usage.sessionCount)', 'totalSessions')
+      .addSelect('SUM(usage.levelsCompleted)', 'totalLevels')
+      .addSelect('SUM(usage.starsEarned)', 'totalStars')
+      .addSelect('SUM(usage.correctExercises)', 'totalCorrect')
+      .addSelect('SUM(usage.incorrectExercises)', 'totalIncorrect')
+      .where('usage.date >= :startDate', { startDate: startDateStr })
+      .getRawOne();
+
+    const totalMinutes = parseInt(usageResult?.totalMinutes || '0', 10);
+    const totalSessions = parseInt(usageResult?.totalSessions || '0', 10);
+    const totalLevels = parseInt(usageResult?.totalLevels || '0', 10);
+    const totalStars = parseInt(usageResult?.totalStars || '0', 10);
+    const totalCorrect = parseInt(usageResult?.totalCorrect || '0', 10);
+    const totalIncorrect = parseInt(usageResult?.totalIncorrect || '0', 10);
+    const totalExercises = totalCorrect + totalIncorrect;
+
+    // Children active today
+    const today = new Date().toISOString().split('T')[0];
+    const activeToday = await this.dailyUsageRepository
+      .createQueryBuilder('usage')
+      .select('COUNT(DISTINCT usage.childProfileId)', 'count')
+      .where('usage.date = :today', { today })
+      .andWhere('usage.totalMinutes > 0')
+      .getRawOne();
+    const activeTodayCount = parseInt(activeToday?.count || '0', 10);
+
+    // Children active this week
+    const weekStart = new Date();
+    const dayOfWeek = weekStart.getDay();
+    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    weekStart.setDate(weekStart.getDate() + mondayOffset);
+    const weekStartStr = weekStart.toISOString().split('T')[0];
+
+    const activeThisWeek = await this.dailyUsageRepository
+      .createQueryBuilder('usage')
+      .select('COUNT(DISTINCT usage.childProfileId)', 'count')
+      .where('usage.date >= :weekStart', { weekStart: weekStartStr })
+      .andWhere('usage.totalMinutes > 0')
+      .getRawOne();
+    const activeThisWeekCount = parseInt(activeThisWeek?.count || '0', 10);
+
+    // Daily usage trend (last 7 days)
+    const dailyTrend: Array<{
+      date: string;
+      activeChildren: number;
+      totalMinutes: number;
+      sessions: number;
+    }> = [];
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date();
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().split('T')[0];
+
+      const dayResult = await this.dailyUsageRepository
+        .createQueryBuilder('usage')
+        .select('COUNT(DISTINCT usage.childProfileId)', 'activeChildren')
+        .addSelect('SUM(usage.totalMinutes)', 'totalMinutes')
+        .addSelect('SUM(usage.sessionCount)', 'sessions')
+        .where('usage.date = :date', { date: dateStr })
+        .getRawOne();
+
+      dailyTrend.push({
+        date: dateStr,
+        activeChildren: parseInt(dayResult?.activeChildren || '0', 10),
+        totalMinutes: parseInt(dayResult?.totalMinutes || '0', 10),
+        sessions: parseInt(dayResult?.sessions || '0', 10),
+      });
+    }
+
+    // Top 10 most active children
+    const topChildren = await this.dailyUsageRepository
+      .createQueryBuilder('usage')
+      .select('usage.childProfileId', 'childProfileId')
+      .addSelect('SUM(usage.totalMinutes)', 'totalMinutes')
+      .addSelect('SUM(usage.levelsCompleted)', 'levelsCompleted')
+      .where('usage.date >= :startDate', { startDate: startDateStr })
+      .groupBy('usage.childProfileId')
+      .orderBy('SUM(usage.totalMinutes)', 'DESC')
+      .limit(10)
+      .getRawMany();
+
+    // Get child names for top children
+    const topChildrenWithNames = await Promise.all(
+      topChildren.map(async (child) => {
+        const profile = await this.childProfileRepository.findOne({
+          where: { id: child.childProfileId },
+        });
+        return {
+          childProfileId: child.childProfileId,
+          childName: profile?.name || 'Unknown',
+          totalMinutes: parseInt(child.totalMinutes || '0', 10),
+          levelsCompleted: parseInt(child.levelsCompleted || '0', 10),
+        };
+      }),
+    );
+
+    return {
+      period: {
+        days,
+        startDate: startDateStr,
+        endDate: new Date().toISOString().split('T')[0],
+      },
+      overview: {
+        totalChildren,
+        activeChildren,
+        activeTodayCount,
+        activeThisWeekCount,
+        engagementRate:
+          totalChildren > 0
+            ? Math.round((activeChildren / totalChildren) * 100)
+            : 0,
+      },
+      usage: {
+        totalMinutes,
+        totalSessions,
+        totalLevels,
+        totalStars,
+        averageAccuracy:
+          totalExercises > 0
+            ? Math.round((totalCorrect / totalExercises) * 100)
+            : 0,
+        averageMinutesPerActiveChild:
+          activeChildren > 0 ? Math.round(totalMinutes / activeChildren) : 0,
+        averageSessionsPerActiveChild:
+          activeChildren > 0 ? Math.round(totalSessions / activeChildren) : 0,
+      },
+      dailyTrend,
+      topChildren: topChildrenWithNames,
+    };
+  }
+
+  /**
+   * Obtiene analíticas detalladas de un niño para el admin
+   */
+  async getChildAnalyticsAdmin(childId: string, days: number = 30) {
+    const childProfile = await this.verifyChildProfile(childId);
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+    const startDateStr = startDate.toISOString().split('T')[0];
+    const endDateStr = new Date().toISOString().split('T')[0];
+
+    // Get daily usage
+    const dailyUsageData = await this.getDailyUsageRange(
+      childId,
+      startDateStr,
+      endDateStr,
+    );
+
+    // Get weekly reports (last 4 weeks)
+    const weeklyReports = await this.getWeeklyReportsAdmin(childId, 4);
+
+    // Get full report data
+    const fullReport = await this.getFullReport(childId);
+
+    return {
+      childProfile: {
+        id: childProfile.id,
+        name: childProfile.name,
+        avatarUrl: childProfile.avatarUrl,
+        birthDate: childProfile.birthDate?.toISOString().split('T')[0] || null,
+        age: childProfile.calculatedAge,
+        parentId: childProfile.parentId,
+      },
+      period: {
+        days,
+        startDate: startDateStr,
+        endDate: endDateStr,
+      },
+      dailyUsage: dailyUsageData.dailyUsage,
+      weeklyReports,
+      overallStats: fullReport.overallStats,
+      letterProgress: fullReport.letterProgress,
+      usageTrend: fullReport.usageTrend,
+      milestones: fullReport.milestones,
+      improvementAreas: fullReport.improvementAreas,
+    };
+  }
+
+  /**
+   * Obtiene reportes semanales para el admin
+   */
+  async getWeeklyReportsAdmin(childId: string, weeks: number = 4): Promise<WeeklyReportResponseDto[]> {
+    const reports: WeeklyReportResponseDto[] = [];
+
+    for (let weekOffset = 0; weekOffset < weeks; weekOffset++) {
+      try {
+        const report = await this.getWeeklyReport(childId, weekOffset);
+        reports.push(report);
+      } catch (error) {
+        this.logger.warn(`Error getting weekly report for offset ${weekOffset}: ${error.message}`);
+      }
+    }
+
+    return reports;
+  }
 }

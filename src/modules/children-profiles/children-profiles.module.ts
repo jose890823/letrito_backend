@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { ChildProfile } from './entities/child-profile.entity';
 import { ChildrenProfilesService } from './children-profiles.service';
 import { ChildrenProfilesController } from './children-profiles.controller';
+import { ChildrenProfilesAdminController } from './children-profiles-admin.controller';
 
 /**
  * Módulo de Perfiles de Niños
@@ -17,10 +18,11 @@ import { ChildrenProfilesController } from './children-profiles.controller';
  * - Configuración individual por perfil (límites, sonidos, etc.)
  * - Soft delete para eliminación segura
  * - Límite configurable de perfiles por padre
+ * - Endpoints admin para gestión centralizada
  */
 @Module({
   imports: [TypeOrmModule.forFeature([ChildProfile]), ConfigModule],
-  controllers: [ChildrenProfilesController],
+  controllers: [ChildrenProfilesController, ChildrenProfilesAdminController],
   providers: [ChildrenProfilesService],
   exports: [ChildrenProfilesService, TypeOrmModule],
 })
