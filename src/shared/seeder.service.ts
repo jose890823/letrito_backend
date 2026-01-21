@@ -1,9 +1,16 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnApplicationBootstrap,
+  Inject,
+  Optional,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { User, UserRole } from '../modules/auth/entities/user.entity';
+import { PetService } from '../modules/pet/pet.service';
 
 @Injectable()
 export class SeederService implements OnApplicationBootstrap {
@@ -14,6 +21,7 @@ export class SeederService implements OnApplicationBootstrap {
     private readonly userRepository: Repository<User>,
     private readonly configService: ConfigService,
     private readonly dataSource: DataSource,
+    @Optional() private readonly petService?: PetService,
   ) {}
 
   async onApplicationBootstrap() {
@@ -27,6 +35,7 @@ export class SeederService implements OnApplicationBootstrap {
     }
 
     await this.seedSuperAdmin();
+    await this.seedPetAccessories();
   }
 
   /**
@@ -112,5 +121,20 @@ export class SeederService implements OnApplicationBootstrap {
 
     await this.userRepository.save(superAdmin);
     this.logger.log(`Super Admin creado: ${superAdminEmail}`);
+  }
+
+  /**
+   * Crea los accesorios iniciales para mascotas
+   */
+  private async seedPetAccessories(): Promise<void> {
+    if (this.petService) {
+      try {
+        await this.petService.seedAccessories();
+      } catch (error) {
+        this.logger.warn(
+          `No se pudieron sembrar accesorios: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+        );
+      }
+    }
   }
 }
