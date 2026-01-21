@@ -23,6 +23,7 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ContactModule } from './modules/contact/contact.module';
 import { ChildrenProfilesModule } from './modules/children-profiles/children-profiles.module';
 import { ProgressModule } from './modules/progress/progress.module';
+import { PetModule } from './modules/pet/pet.module';
 
 // Importación condicional de módulos opcionales
 let EmailModule: any = null;
@@ -65,6 +66,7 @@ if (
     ContactModule,
     ChildrenProfilesModule,
     ProgressModule,
+    PetModule,
     // Módulos opcionales
     ...(EmailModule ? [EmailModule] : []),
   ],
@@ -111,6 +113,7 @@ export class AppModule {
       'ChildrenProfilesModule integrado - Perfiles de niños',
     );
     AppModule.logger.log('ProgressModule integrado - Progreso de aprendizaje');
+    AppModule.logger.log('PetModule integrado - Mascota virtual Letrito');
 
     // Log módulos opcionales
     if (EmailModule) {

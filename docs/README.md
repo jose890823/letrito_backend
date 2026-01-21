@@ -39,7 +39,7 @@ Cada módulo tiene su propio archivo `.md` en la carpeta `modules/` con la sigui
 |--------|-------------|--------|---------------|
 | [children-profiles](./modules/children-profiles.md) | Perfiles de niños | ✅ Completo | 📄 |
 | [progress](./modules/progress.md) | Progreso de aprendizaje | ✅ Completo | 📄 |
-| [pet](./modules/pet.md) | Mascota virtual | 🔜 Pendiente | - |
+| [pet](./modules/pet.md) | Mascota virtual Letrito | ✅ Completo | 📄 |
 | [parental](./modules/parental.md) | Control parental | 🔜 Pendiente | - |
 | [analytics](./modules/analytics.md) | Analíticas de uso | 🔜 Pendiente | - |
 
