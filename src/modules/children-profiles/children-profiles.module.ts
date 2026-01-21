@@ -22,6 +22,6 @@ import { ChildrenProfilesController } from './children-profiles.controller';
   imports: [TypeOrmModule.forFeature([ChildProfile]), ConfigModule],
   controllers: [ChildrenProfilesController],
   providers: [ChildrenProfilesService],
-  exports: [ChildrenProfilesService],
+  exports: [ChildrenProfilesService, TypeOrmModule],
 })
 export class ChildrenProfilesModule {}
