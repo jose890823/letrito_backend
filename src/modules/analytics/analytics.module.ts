@@ -1,0 +1,43 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { SessionEvent } from './entities/session-event.entity';
+import { DailyUsage } from './entities/daily-usage.entity';
+import { AnalyticsService } from './analytics.service';
+import { AnalyticsController } from './analytics.controller';
+import { ChildrenProfilesModule } from '../children-profiles/children-profiles.module';
+
+/**
+ * Módulo de Analytics
+ *
+ * Gestiona el registro y análisis de eventos de uso de la aplicación
+ * para cada niño, incluyendo:
+ *
+ * Features:
+ * - Registro de eventos de sesión en batch
+ * - Uso diario agregado automáticamente
+ * - Reportes semanales con comparativas
+ * - Reportes completos con tendencias y recomendaciones
+ * - Identificación de áreas de mejora
+ * - Mensajes motivacionales personalizados
+ *
+ * Entidades:
+ * - SessionEvent: Eventos individuales de sesión
+ * - DailyUsage: Uso diario agregado por niño
+ *
+ * Endpoints:
+ * - POST /analytics/events - Registrar eventos en batch
+ * - GET /analytics/:childId/daily - Uso diario
+ * - GET /analytics/:childId/daily/range - Uso en rango de fechas
+ * - GET /analytics/:childId/weekly - Reporte semanal
+ * - GET /analytics/:childId/report - Reporte completo
+ */
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([SessionEvent, DailyUsage]),
+    ChildrenProfilesModule,
+  ],
+  controllers: [AnalyticsController],
+  providers: [AnalyticsService],
+  exports: [AnalyticsService],
+})
+export class AnalyticsModule {}
